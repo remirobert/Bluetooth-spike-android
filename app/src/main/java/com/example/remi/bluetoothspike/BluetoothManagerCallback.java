@@ -10,5 +10,6 @@ import java.util.Set;
 
 public abstract class BluetoothManagerCallback {
 
+    public void didUpdateConnection(BluetoothDevice device, String state) {}
     public void scanResult(Set<BluetoothDevice> devices) {}
 }

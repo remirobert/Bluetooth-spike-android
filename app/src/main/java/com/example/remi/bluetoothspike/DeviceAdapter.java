@@ -1,5 +1,6 @@
 package com.example.remi.bluetoothspike;
 
+import android.bluetooth.BluetoothDevice;
 import android.support.v7.widget.RecyclerView;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -15,14 +16,34 @@ import java.util.List;
 
 public class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.ViewHolder> {
 
-    private List<String> mDevices = new ArrayList<>();
+    private List<BluetoothDevice> mDevices = new ArrayList<>();
+    private DeviceViewHolderClick mDeviceViewHolderClick;
+
+    public static interface DeviceViewHolderClick {
+        void onDevice(BluetoothDevice device);
+    }
 
     public static class ViewHolder extends RecyclerView.ViewHolder {
-        // each data item is just a string in this case
-        public TextView mTextView;
+
+        public TextView mTextViewName;
+        public TextView mTextViewIdentifier;
+
         public ViewHolder(View v) {
             super(v);
-            mTextView = (TextView) v.findViewById(R.id.text_view_name);
+            mTextViewName = (TextView) v.findViewById(R.id.text_view_name);
+            mTextViewIdentifier = (TextView) v.findViewById(R.id.text_view_identifier);
+        }
+
+        public void BindView(final BluetoothDevice device, final DeviceViewHolderClick deviceViewHolderClick) {
+            String name = device.getName();
+            mTextViewName.setText(name);
+            mTextViewIdentifier.setText(device.getAddress());
+            itemView.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    deviceViewHolderClick.onDevice(device);
+                }
+            });
         }
     }
 
@@ -36,7 +57,8 @@ public class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.ViewHolder
 
     @Override
     public void onBindViewHolder(ViewHolder holder, int position) {
-        holder.mTextView.setText(mDevices.get(position));
+        BluetoothDevice device = mDevices.get(position);
+        holder.BindView(device, mDeviceViewHolderClick);
     }
 
     @Override
@@ -44,8 +66,12 @@ public class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.ViewHolder
         return mDevices.size();
     }
 
-    public void setmDevices(List<String> mDevices) {
+    public void setmDevices(List<BluetoothDevice> mDevices) {
         this.mDevices = mDevices;
         notifyDataSetChanged();
+    }
+
+    public DeviceAdapter(DeviceViewHolderClick mDeviceViewHolderClick) {
+        this.mDeviceViewHolderClick = mDeviceViewHolderClick;
     }
 }

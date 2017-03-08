@@ -2,6 +2,8 @@ package com.example.remi.bluetoothspike;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
@@ -16,6 +18,8 @@ import android.widget.Toast;
 import java.util.HashSet;
 import java.util.Set;
 
+import static android.bluetooth.BluetoothAdapter.ACTION_DISCOVERY_FINISHED;
+
 /**
  * Created by remi on 07/03/2017.
  */
@@ -26,23 +30,47 @@ public final class BluetoothManager {
     private Context mContext;
     private static final String TAG = "BluetoothManager";
     private static final int REQUEST_ENABLE_BT = 0;
+    private BluetoothManagerCallback mManagerCallback;
 
-    public Set<BluetoothDevice> mDevices;
+    private Set<BluetoothDevice> mDevices;
 
     private void didScanNewDevice(BluetoothDevice device) {
-        Log.v(TAG, "Found device " + device.getName() + " MAC : " + device.getAddress());
-        mDevices.add(device);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            if (device.getType() != BluetoothDevice.DEVICE_TYPE_UNKNOWN) {
+                mDevices.add(device);
+            }
+        }
+        else {
+            mDevices.add(device);
+        }
     }
 
     private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
-            Log.v(TAG, "current action : " + action);
-            if (BluetoothDevice.ACTION_FOUND.equals(action)) {
-                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                didScanNewDevice(device);
-            } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
-                mBluetoothAdapter.startDiscovery();
+            BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+
+            switch (action) {
+                case BluetoothDevice.ACTION_FOUND: {
+                    didScanNewDevice(device);
+                    break;
+                }
+                case BluetoothAdapter.ACTION_DISCOVERY_FINISHED: {
+                    mBluetoothAdapter.startDiscovery();
+                    break;
+                }
+                case BluetoothDevice.ACTION_ACL_CONNECTED: {
+                    pairedDevices();
+                    mManagerCallback.didUpdateConnection(device, "connected");
+                    Log.v(TAG, "Connected to device");
+                    break;
+                }
+                case BluetoothDevice.ACTION_ACL_DISCONNECTED: {
+                    mManagerCallback.didUpdateConnection(device, "disconnected");
+                    Log.v(TAG, "disconnected to device");
+                    break;
+                }
+                default: break;
             }
         }
     };
@@ -61,28 +89,37 @@ public final class BluetoothManager {
         return true;
     }
 
-    public void pairedDevices() {
+    public Boolean pairedDevices() {
         Set<BluetoothDevice> pairedDevices = mBluetoothAdapter.getBondedDevices();
 
         Log.v(TAG, "Paired devices connected : " + pairedDevices.size());
+        if (pairedDevices.size() == 0) {
+            return false;
+        }
         if (pairedDevices.size() > 0) {
             for (BluetoothDevice device : pairedDevices) {
                 String deviceName = device.getName();
                 String deviceHardwareAddress = device.getAddress();
                 Log.v(TAG, "Found device " + deviceName + " MAC : " + deviceHardwareAddress);
+                connectDevice(device);
             }
         }
+        return true;
     }
 
-    public void startScanning(final BluetoothManagerCallback callback) {
+    public void startScanning() {
         if (!checkBluetoothAvailability()) {
             return;
         }
 
+        pairedDevices();
+
         IntentFilter filter = new IntentFilter();
         filter.addAction(BluetoothDevice.ACTION_FOUND);
         filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_STARTED);
-        filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
+        filter.addAction(ACTION_DISCOVERY_FINISHED);
+        filter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
+        filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
 
         mContext.registerReceiver(mReceiver, filter);
         mBluetoothAdapter.startDiscovery();
@@ -96,7 +133,7 @@ public final class BluetoothManager {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                         BluetoothDevice device = result.getDevice();
                         didScanNewDevice(device);
-                        callback.scanResult(mDevices);
+                        mManagerCallback.scanResult(mDevices);
                     }
                 }
             });
@@ -107,7 +144,7 @@ public final class BluetoothManager {
                 @Override
                 public void onLeScan(BluetoothDevice device, int rssi, byte[] scanRecord) {
                     didScanNewDevice(device);
-                    callback.scanResult(mDevices);
+                    mManagerCallback.scanResult(mDevices);
                 }
             });
         }
@@ -118,8 +155,42 @@ public final class BluetoothManager {
         mBluetoothAdapter.cancelDiscovery();
     }
 
-    public BluetoothManager(Context mContext) {
+    public void connectDevice(final BluetoothDevice device) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            BluetoothGattCallback callbackGatt = new BluetoothGattCallback() {
+                @Override
+                public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+                    super.onConnectionStateChange(gatt, status, newState);
+                    String state = "None";
+                    switch (newState) {
+                        case BluetoothGatt.STATE_CONNECTING:
+                            state = "connecting";
+                            break;
+                        case BluetoothGatt.STATE_CONNECTED:
+                            state = "connected";
+                            break;
+                        case BluetoothGatt.STATE_DISCONNECTING:
+                            state = "disconnecting";
+                            break;
+                        case BluetoothGatt.STATE_DISCONNECTED:
+                            state = "disconnected";
+                            break;
+                        default: break;
+                    }
+                    mManagerCallback.didUpdateConnection(device, state);
+                }
+            };
+            mManagerCallback.didUpdateConnection(device, "connecting");
+            device.connectGatt(mContext, true, callbackGatt);
+            if (!device.createBond()) {
+                Log.e(TAG, "impossible to bound the device");
+            }
+        }
+    }
+
+    public BluetoothManager(Context mContext, BluetoothManagerCallback callback) {
         this.mContext = mContext;
         mDevices = new HashSet<>();
+        mManagerCallback = callback;
     }
 }
